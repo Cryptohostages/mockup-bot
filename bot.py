@@ -1,18 +1,16 @@
 import os
 import io
-import math
 from PIL import Image, ImageDraw, ImageFilter
 from telegram import Update, ReplyKeyboardMarkup, ReplyKeyboardRemove
 from telegram.ext import (
     Application, CommandHandler, MessageHandler,
-    ConversationHandler, CallbackContext, filters
+    ConversationHandler, ContextTypes, filters
 )
 
-TOKEN = os.environ.get("BOT_TOKEN", "YOUR_TOKEN_HERE")
-
+TOKEN = os.environ.get("BOT_TOKEN", "")
 PHOTO, ZOOM, OFFSET, DI = range(4)
 
-def make_mockup(screenshot: Image.Image, zoom: int, offset: int, show_di: bool) -> io.BytesIO:
+def make_mockup(screenshot, zoom, offset, show_di):
     SIZE = 1080
     scale = zoom / 100
     offset_pct = offset / 100
@@ -21,16 +19,15 @@ def make_mockup(screenshot: Image.Image, zoom: int, offset: int, show_di: bool) 
     draw = ImageDraw.Draw(bg)
     for y in range(SIZE):
         t = y / SIZE
-        r = int(144 * (1-t) + 25 * t)
-        g = int(212 * (1-t) + 133 * t)
-        b = int(255 * (1-t) + 192 * t)
-        draw.line([(0, y), (SIZE, y)], fill=(r, g, b))
+        r = int(144*(1-t) + 25*t)
+        g = int(212*(1-t) + 133*t)
+        b = int(255*(1-t) + 192*t)
+        draw.line([(0,y),(SIZE,y)], fill=(r,g,b))
 
     phone_h = SIZE * 0.88 * scale
     phone_w = phone_h * 0.461
     px = (SIZE - phone_w) / 2
-    center_y = (SIZE - phone_h) / 2
-    py = center_y + offset_pct * SIZE
+    py = (SIZE - phone_h) / 2 + offset_pct * SIZE
 
     R1 = phone_w * 0.145
     t1 = phone_w * 0.018
@@ -40,160 +37,90 @@ def make_mockup(screenshot: Image.Image, zoom: int, offset: int, show_di: bool) 
 
     canvas = bg.convert("RGBA")
 
-    shadow = Image.new("RGBA", (SIZE, SIZE), (0, 0, 0, 0))
-    sd = ImageDraw.Draw(shadow)
-    sd.rounded_rectangle(
+    shadow = Image.new("RGBA", (SIZE,SIZE), (0,0,0,0))
+    ImageDraw.Draw(shadow).rounded_rectangle(
         [px+4, py+36, px+phone_w+4, py+phone_h+36],
-        radius=R1, fill=(0, 0, 0, 100)
-    )
+        radius=R1, fill=(0,0,0,100))
     shadow = shadow.filter(ImageFilter.GaussianBlur(30))
     canvas = Image.alpha_composite(canvas, shadow)
 
-    shell = Image.new("RGBA", (SIZE, SIZE), (0, 0, 0, 0))
-    sd2 = ImageDraw.Draw(shell)
-    sd2.rounded_rectangle(
+    shell = Image.new("RGBA", (SIZE,SIZE), (0,0,0,0))
+    ImageDraw.Draw(shell).rounded_rectangle(
         [px, py, px+phone_w, py+phone_h],
-        radius=R1, fill=(210, 228, 245, 235)
-    )
+        radius=R1, fill=(210,228,245,235))
     canvas = Image.alpha_composite(canvas, shell)
 
-    bx = px + t1; by = py + t1
-    bw = phone_w - t1*2; bh = phone_h - t1*2
-    bezel = Image.new("RGBA", (SIZE, SIZE), (0, 0, 0, 0))
-    bd = ImageDraw.Draw(bezel)
-    bd.rounded_rectangle([bx, by, bx+bw, by+bh], radius=R2, fill=(13, 13, 13, 255))
+    bx=px+t1; by=py+t1; bw=phone_w-t1*2; bh=phone_h-t1*2
+    bezel = Image.new("RGBA", (SIZE,SIZE), (0,0,0,0))
+    ImageDraw.Draw(bezel).rounded_rectangle(
+        [bx,by,bx+bw,by+bh], radius=R2, fill=(13,13,13,255))
     canvas = Image.alpha_composite(canvas, bezel)
 
-    sx = bx + t2; sy = by + t2
-    sw = bw - t2*2; sh = bh - t2*2
+    sx=bx+t2; sy=by+t2; sw=bw-t2*2; sh=bh-t2*2
 
     ia = screenshot.width / screenshot.height
     sa = sw / sh
     if ia > sa:
-        new_h = int(sh); new_w = int(new_h * ia)
+        new_h=int(sh); new_w=int(new_h*ia)
     else:
-        new_w = int(sw); new_h = int(new_w / ia)
+        new_w=int(sw); new_h=int(new_w/ia)
 
-    ss = screenshot.convert("RGBA").resize((new_w, new_h), Image.LANCZOS)
-    dx = int((new_w - sw) / 2)
-    ss_crop = ss.crop((dx, 0, dx + int(sw), int(sh)))
+    ss = screenshot.convert("RGBA").resize((new_w,new_h), Image.LANCZOS)
+    dx = int((new_w-sw)/2)
+    ss_crop = ss.crop((dx, 0, dx+int(sw), int(sh)))
 
-    screen_layer = Image.new("RGBA", (SIZE, SIZE), (0, 0, 0, 0))
-    scr_mask = Image.new("L", (int(sw), int(sh)), 0)
-    dm = ImageDraw.Draw(scr_mask)
-    dm.rounded_rectangle([0, 0, int(sw), int(sh)], radius=int(R3), fill=255)
-    screen_layer.paste(ss_crop, (int(sx), int(sy)), scr_mask)
+    scr_mask = Image.new("L", (int(sw),int(sh)), 0)
+    ImageDraw.Draw(scr_mask).rounded_rectangle(
+        [0,0,int(sw),int(sh)], radius=int(R3), fill=255)
+    screen_layer = Image.new("RGBA", (SIZE,SIZE), (0,0,0,0))
+    screen_layer.paste(ss_crop, (int(sx),int(sy)), scr_mask)
     canvas = Image.alpha_composite(canvas, screen_layer)
 
     if show_di:
-        di_w = sw * 0.293
-        di_h = sw * 0.086
-        di_x = sx + (sw - di_w) / 2
-        di_y = sy + sh * 0.012
-        di_layer = Image.new("RGBA", (SIZE, SIZE), (0, 0, 0, 0))
-        dd = ImageDraw.Draw(di_layer)
-        dd.rounded_rectangle(
-            [di_x, di_y, di_x+di_w, di_y+di_h],
-            radius=di_h/2, fill=(0, 0, 0, 255)
-        )
+        di_w=sw*0.293; di_h=sw*0.086
+        di_x=sx+(sw-di_w)/2; di_y=sy+sh*0.012
+        di_layer = Image.new("RGBA", (SIZE,SIZE), (0,0,0,0))
+        ImageDraw.Draw(di_layer).rounded_rectangle(
+            [di_x,di_y,di_x+di_w,di_y+di_h],
+            radius=di_h/2, fill=(0,0,0,255))
         canvas = Image.alpha_composite(canvas, di_layer)
 
-    canvas = canvas.crop((0, 0, SIZE, SIZE))
+    canvas = canvas.crop((0,0,SIZE,SIZE))
     out = io.BytesIO()
     canvas.convert("RGB").save(out, format="PNG")
     out.seek(0)
     return out
 
-
-async def start(update: Update, ctx: CallbackContext):
-    await update.message.reply_text(
-        "👋 Привет! Отправь мне скриншот с iPhone:"
-    )
+async def start(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+    await update.message.reply_text("👋 Отправь скриншот с iPhone:")
     return PHOTO
 
-async def got_photo(update: Update, ctx: CallbackContext):
+async def got_photo(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     photo = update.message.photo[-1]
     file = await photo.get_file()
-    data = await file.download_as_bytearray()
-    ctx.user_data["photo"] = data
+    ctx.user_data["photo"] = await file.download_as_bytearray()
     await update.message.reply_text(
-        "🔍 Зум? (60–150)\n0 = полный телефон, 120–140 = выходит за край",
+        "🔍 Зум? (60–150)\n95 = весь телефон, 120–140 = выходит за край",
         reply_markup=ReplyKeyboardMarkup(
-            [["95"], ["110"], ["125"], ["140"]],
-            one_time_keyboard=True, resize_keyboard=True
-        )
-    )
+            [["95"],["110"],["125"],["140"]],
+            one_time_keyboard=True, resize_keyboard=True))
     return ZOOM
 
-async def got_zoom(update: Update, ctx: CallbackContext):
+async def got_zoom(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     try:
-        zoom = max(60, min(150, int(update.message.text.strip())))
+        ctx.user_data["zoom"] = max(60, min(150, int(update.message.text.strip())))
     except:
         await update.message.reply_text("Введи число, например 110")
         return ZOOM
-    ctx.user_data["zoom"] = zoom
     await update.message.reply_text(
         "↕️ Офсет? (0–60)\n0 = по центру, 30–40 = выходит снизу",
         reply_markup=ReplyKeyboardMarkup(
-            [["0"], ["20"], ["35"], ["50"]],
-            one_time_keyboard=True, resize_keyboard=True
-        )
-    )
+            [["0"],["20"],["35"],["50"]],
+            one_time_keyboard=True, resize_keyboard=True))
     return OFFSET
 
-async def got_offset(update: Update, ctx: CallbackContext):
+async def got_offset(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     try:
-        offset = max(0, min(60, int(update.message.text.strip())))
+        ctx.user_data["offset"] = max(0, min(60, int(update.message.text.strip())))
     except:
-        await update.message.reply_text("Введи число от 0 до 60")
-        return OFFSET
-    ctx.user_data["offset"] = offset
-    await update.message.reply_text(
-        "⬛ Dynamic Island?\nВключай если сверху НЕ чёрный экран",
-        reply_markup=ReplyKeyboardMarkup(
-            [["✅ Да"], ["❌ Нет"]],
-            one_time_keyboard=True, resize_keyboard=True
-        )
-    )
-    return DI
-
-async def got_di(update: Update, ctx: CallbackContext):
-    show_di = "да" in update.message.text.lower() or "✅" in update.message.text
-    await update.message.reply_text("⏳ Генерирую...", reply_markup=ReplyKeyboardRemove())
-    try:
-        screenshot = Image.open(io.BytesIO(ctx.user_data["photo"]))
-        result = make_mockup(screenshot, ctx.user_data["zoom"], ctx.user_data["offset"], show_di)
-        await update.message.reply_photo(
-            photo=result,
-            caption=f"✅ Готово! Зум: {ctx.user_data['zoom']}% | Офсет: {ctx.user_data['offset']}% | DI: {'вкл' if show_di else 'выкл'}\n\nОтправь новый скриншот 📱"
-        )
-    except Exception as e:
-        await update.message.reply_text(f"Ошибка: {e}")
-    ctx.user_data.clear()
-    return ConversationHandler.END
-
-async def cancel(update: Update, ctx: CallbackContext):
-    await update.message.reply_text("Отменено.", reply_markup=ReplyKeyboardRemove())
-    return ConversationHandler.END
-
-def main():
-    app = Application.builder().token(TOKEN).build()
-    conv = ConversationHandler(
-        entry_points=[
-            CommandHandler("start", start),
-            MessageHandler(filters.PHOTO, got_photo),
-        ],
-        states={
-            PHOTO:  [MessageHandler(filters.PHOTO, got_photo)],
-            ZOOM:   [MessageHandler(filters.TEXT & ~filters.COMMAND, got_zoom)],
-            OFFSET: [MessageHandler(filters.TEXT & ~filters.COMMAND, got_offset)],
-            DI:     [MessageHandler(filters.TEXT & ~filters.COMMAND, got_di)],
-        },
-        fallbacks=[CommandHandler("cancel", cancel)],
-    )
-    app.add_handler(conv)
-    print("Bot started...")
-    app.run_polling()
-
-if __name__ == "__main__":
-    main()
+        await
